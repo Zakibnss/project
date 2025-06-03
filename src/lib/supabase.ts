@@ -1,25 +1,139 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // Use service role key for admin operations
+CREATE TABLE associations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  user_id uuid REFERENCES auth.users NOT NULL,
+  created_at timestamptz DEFAULT now()
 );
 
-async function createAdminUser(email, password) {
-  const { data, error } = await supabase.auth.admin.createUser({
-    email: email,
-    password: password,
-    email_confirm: true, // Skip email confirmation
-    user_metadata: { role: 'admin' }
-  });
+ALTER TABLE associations ENABLE ROW LEVEL SECURITY;
 
-  if (error) {
-    console.error('Error creating admin user:', error);
-    return;
-  }
+CREATE POLICY "Users can view their own association"
+  ON associations
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
 
-  console.log('Admin user created:', data);
-}
+CREATE POLICY "Admin can view all associations"
+  ON associations
+  FOR ALL
+  TO authenticated
+  USING (auth.jwt() ->> 'role' = 'admin');
 
-// Call with your admin credentials
-createAdminUser('admin@yourdomain.com', 'securepassword123');
+-- Create members table
+CREATE TABLE members (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  first_name text NOT NULL,
+  last_name text NOT NULL,
+  date_of_birth date NOT NULL,
+  type text NOT NULL CHECK (type IN ('adherent', 'coach', 'referee')),
+  grade text,
+  association_id uuid REFERENCES associations NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their association's members"
+  ON members
+  FOR SELECT
+  TO authenticated
+  USING (
+    association_id IN (
+      SELECT id FROM associations WHERE user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can manage their association's members"
+  ON members
+  FOR ALL
+  TO authenticated
+  USING (
+    association_id IN (
+      SELECT id FROM associations WHERE user_id = auth.uid()
+    )
+  );
+
+-- Create competitions table
+CREATE TABLE competitions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  date date NOT NULL,
+  location text NOT NULL,
+  registration_deadline date NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE competitions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view competitions"
+  ON competitions
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Only admin can manage competitions"
+  ON competitions
+  FOR ALL
+  TO authenticated
+  USING (auth.jwt() ->> 'role' = 'admin');
+
+-- Create competition_registrations table
+CREATE TABLE competition_registrations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  competition_id uuid REFERENCES competitions NOT NULL,
+  member_id uuid REFERENCES members NOT NULL,
+  weight numeric NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE competition_registrations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view their registrations"
+  ON competition_registrations
+  FOR SELECT
+  TO authenticated
+  USING (
+    member_id IN (
+      SELECT id FROM members WHERE association_id IN (
+        SELECT id FROM associations WHERE user_id = auth.uid()
+      )
+    )
+  );
+
+CREATE POLICY "Users can manage their registrations"
+  ON competition_registrations
+  FOR ALL
+  TO authenticated
+  USING (
+    member_id IN (
+      SELECT id FROM members WHERE association_id IN (
+        SELECT id FROM associations WHERE user_id = auth.uid()
+      )
+    )
+  );
+
+-- Create competition_results table
+CREATE TABLE competition_results (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  competition_id uuid REFERENCES competitions NOT NULL,
+  poule_name text NOT NULL,
+  first_place_member_id uuid REFERENCES members,
+  second_place_member_id uuid REFERENCES members,
+  third_place_member_id uuid REFERENCES members,
+  fourth_place_member_id uuid REFERENCES members,
+  created_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE competition_results ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Anyone can view results"
+  ON competition_results
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Only admin can manage results"
+  ON competition_results
+  FOR ALL
+  TO authenticated
+  USING (auth.jwt() ->> 'role' = 'admin');
